@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Dev-only Info.plist. Contains just the ATS exceptions needed for local
+  development against the lifting server running on http://localhost:3000.
+  All other keys (UILaunchScreen, UIApplicationSceneManifest, etc.) are
+  generated from INFOPLIST_KEY_* build settings and merged automatically.
+
+  ATS rules:
+    - NSAllowsLocalNetworking=true permits plain HTTP to .local/link-local
+      addresses (not ideal for the simulator because it uses 127.0.0.1).
+    - NSExceptionDomains pins an explicit allowance for 127.0.0.1 and
+      localhost so http://localhost:3000 works from the simulator and
+      Mac target during dev.
+
+  BEFORE SHIPPING: replace with TLS (nginx/Caddy/etc. in front of the Node
+  server) and remove these exceptions. App Store review rejects wide-open
+  ATS configurations.
+-->
+<plist version="1.0">
+<dict>
+    <key>NSAppTransportSecurity</key>
+    <dict>
+        <key>NSAllowsLocalNetworking</key>
+        <true/>
+        <key>NSExceptionDomains</key>
+        <dict>
+            <key>localhost</key>
+            <dict>
+                <key>NSExceptionAllowsInsecureHTTPLoads</key>
+                <true/>
+                <key>NSIncludesSubdomains</key>
+                <true/>
+            </dict>
+            <key>127.0.0.1</key>
+            <dict>
+                <key>NSExceptionAllowsInsecureHTTPLoads</key>
+                <true/>
+            </dict>
+        </dict>
+    </dict>
+</dict>
+</plist>

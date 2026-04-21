@@ -1,80 +1,54 @@
-//
-//  ContentView.swift
-//  lifting
-//
-//  Created by Quintin Smith on 4/20/26.
-//
+// ContentView.swift
+// Root tab navigation. Instantiates WorkoutManager lazily with the
+// shared SwiftData context so the active workout is persisted across
+// launches (and recovered automatically on restart if the app was
+// killed mid-session).
 
 import SwiftUI
 import SwiftData
 
 struct ContentView: View {
     @Environment(\.modelContext) private var modelContext
-    @Query private var items: [Item]
+    @State private var workoutManager: WorkoutManager?
+    @State private var selectedTab = 0
 
     var body: some View {
-        NavigationViewWrapper {
-            List {
-                ForEach(items) { item in
-                    NavigationLink {
-                        Text("Item at \(item.timestamp, format: Date.FormatStyle(date: .numeric, time: .standard))")
-                    } label: {
-                        Text(item.timestamp, format: Date.FormatStyle(date: .numeric, time: .standard))
-                    }
-                }
-                .onDelete(perform: deleteItems)
-            }
-#if os(macOS)
-            .navigationSplitViewColumnWidth(min: 180, ideal: 200)
-#endif
-            .toolbar {
-#if os(iOS)
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    EditButton()
-                }
-#endif
-                ToolbarItem {
-                    Button(action: addItem) {
-                        Label("Add Item", systemImage: "plus")
-                    }
-                }
-            }
-        }
-    }
+        Group {
+            if let manager = workoutManager {
+                TabView(selection: $selectedTab) {
+                    HomeView(selectedTab: $selectedTab)
+                        .tabItem { Label("Home", systemImage: "house.fill") }
+                        .tag(0)
 
-    private func addItem() {
-        withAnimation {
-            let newItem = Item(timestamp: Date())
-            modelContext.insert(newItem)
-        }
-    }
+                    WorkoutView()
+                        .tabItem { Label("Workout", systemImage: "dumbbell.fill") }
+                        .tag(1)
+                        .badge(manager.isActive ? "●" : nil)
 
-    private func deleteItems(offsets: IndexSet) {
-        withAnimation {
-            for index in offsets {
-                modelContext.delete(items[index])
+                    HistoryView()
+                        .tabItem { Label("History", systemImage: "waveform.path.ecg") }
+                        .tag(2)
+
+                    CoachView()
+                        .tabItem { Label("AI Coach", systemImage: "sparkles") }
+                        .tag(3)
+                }
+                .tint(.appAccent)
+                .environment(manager)
+                .preferredColorScheme(.dark)
+            } else {
+                // One-frame placeholder while the manager is being
+                // created. SwiftUI's `.task` + `@State` can't be used
+                // to build a @MainActor type during property init, so
+                // we construct it on appearance here.
+                Color.appBg.ignoresSafeArea()
+                    .task { workoutManager = WorkoutManager(modelContext: modelContext) }
             }
         }
-    }
-}
-
-fileprivate struct NavigationViewWrapper<Content: View>: View {
-    let content: () -> Content
-
-    var body: some View {
-#if os(macOS)
-        NavigationSplitView {
-            content()
-        } detail: {
-            Text("Select an item")
-        }
-#else
-        content()
-#endif
     }
 }
 
 #Preview {
     ContentView()
-        .modelContainer(for: Item.self, inMemory: true)
+        .modelContainer(for: [WorkoutSession.self, ExerciseEntry.self, WorkoutSet.self], inMemory: true)
 }

@@ -1,0 +1,40 @@
+# fly.toml -- generated for the lifting server.
+#
+# Run `fly launch --no-deploy` to create the app and let Fly fill in
+# the `app` name + `primary_region` for you, OR edit those fields
+# manually and run `fly deploy`.
+
+app = "lifting-server"           # change to your chosen app name
+primary_region = "sea"           # change to your closest region (see `fly platform regions`)
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  NODE_ENV   = "production"
+  PORT       = "3000"
+  # CORS_ORIGIN is set per-deploy via `fly secrets` if you need to lock it down.
+
+[http_service]
+  internal_port       = 3000
+  force_https         = true
+  auto_stop_machines  = "stop"   # scale to zero when idle (saves $)
+  auto_start_machines = true
+  min_machines_running = 0       # set to 1 if you want always-on (no cold starts)
+  processes = ["app"]
+
+  [http_service.concurrency]
+    type       = "requests"
+    soft_limit = 200
+    hard_limit = 250
+
+  [[http_service.checks]]
+    interval     = "30s"
+    timeout      = "5s"
+    grace_period = "10s"
+    method       = "GET"
+    path         = "/health"
+
+[[vm]]
+  size   = "shared-cpu-1x"
+  memory = "512mb"
