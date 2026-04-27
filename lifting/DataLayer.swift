@@ -15,6 +15,13 @@ struct WorkoutSetDTO: Codable, Identifiable {
     var exerciseID: UUID?
     var weight: Double
     var reps: Int
+    /// When non-nil, the set was timed (plank, dead hang, etc.) and
+    /// the wire payload carries duration alongside reps. Older clients
+    /// that decode this DTO with the field missing fall back to nil
+    /// (rep-based), which matches server behavior. Optional default
+    /// handled via a custom decoder so the field can be absent on the
+    /// wire without `Decodable` complaining.
+    var durationSeconds: Int?
     var order: Int
     var updatedAt: Date
     var deletedAt: Date?
@@ -25,6 +32,7 @@ struct WorkoutSetDTO: Codable, Identifiable {
         self.exerciseID = set.exercise?.id
         self.weight = set.weight
         self.reps = set.reps
+        self.durationSeconds = set.durationSeconds
         self.order = set.order
         self.updatedAt = set.updatedAt
         self.deletedAt = set.deletedAt
@@ -35,6 +43,7 @@ struct WorkoutSetDTO: Codable, Identifiable {
         exerciseID: UUID?,
         weight: Double,
         reps: Int,
+        durationSeconds: Int? = nil,
         order: Int,
         updatedAt: Date,
         deletedAt: Date? = nil
@@ -43,6 +52,7 @@ struct WorkoutSetDTO: Codable, Identifiable {
         self.exerciseID = exerciseID
         self.weight = weight
         self.reps = reps
+        self.durationSeconds = durationSeconds
         self.order = order
         self.updatedAt = updatedAt
         self.deletedAt = deletedAt

@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Disable cloud + device transfer of sensitive auth data. Workout
+    data lives on the server (and re-syncs after a fresh install via
+    /sync/changes), so there's no value in including it in backups
+    and a real cost to leaking the session JWT.
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="sharedpref" />
+        <exclude domain="database" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="sharedpref" />
+        <exclude domain="database" />
+    </device-transfer>
+</data-extraction-rules>

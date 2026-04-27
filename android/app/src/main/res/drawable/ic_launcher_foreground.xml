@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Placeholder launcher icon. Replace with the icon generated from
+    marketing/app-store-design-prompt.md once you have it. Until then
+    a yellow dumbbell-glyph stub gives the app a recognizable
+    Home Screen tile.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#F5E642"
+        android:pathData="M30,46 L36,46 L36,40 L42,40 L42,68 L36,68 L36,62 L30,62 Z" />
+    <path
+        android:fillColor="#F5E642"
+        android:pathData="M66,46 L72,46 L72,40 L78,40 L78,68 L72,68 L72,62 L66,62 Z" />
+    <path
+        android:fillColor="#F5E642"
+        android:pathData="M42,52 L66,52 L66,56 L42,56 Z" />
+</vector>

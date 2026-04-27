@@ -60,6 +60,19 @@ struct HomeView: View {
         workouts.sorted(by: { $0.endTime > $1.endTime }).prefix(6).map { $0 }
     }
 
+    /// Re-open a previously-completed session. Guarded by the same
+    /// rules as WorkoutManager.resume -- if it refuses (active session
+    /// or deleted), we silently no-op; the context menu already
+    /// disables the button when a workout is active so this path
+    /// should only fire in rare races.
+    private func resume(_ session: WorkoutSession) {
+        guard workoutManager.resume(session) else { return }
+        // Jump straight into the Workout tab so the user sees their
+        // logged sets and can keep going. Without this the user would
+        // resume then stare at the Home screen wondering what changed.
+        selectedTab = 1
+    }
+
     var body: some View {
         NavigationStack {
             ZStack {
@@ -139,12 +152,29 @@ struct HomeView: View {
 
                 VStack(spacing: 8) {
                     ForEach(recentWorkouts, id: \.id) { session in
-                        Button {
-                            selectedTab = 2
+                        // Tap pushes into the session detail view
+                        // (all exercises, all sets, comparisons).
+                        // Long-press surfaces the quick actions
+                        // without needing to open detail first.
+                        NavigationLink {
+                            WorkoutDetailView(session: session)
                         } label: {
                             RecentWorkoutRow(session: session, unit: unit)
                         }
                         .buttonStyle(.plain)
+                        .contextMenu {
+                            Button {
+                                resume(session)
+                            } label: {
+                                Label(
+                                    workoutManager.isActive
+                                        ? "Finish current workout first"
+                                        : "Resume Workout",
+                                    systemImage: "arrow.uturn.backward.circle",
+                                )
+                            }
+                            .disabled(workoutManager.isActive)
+                        }
                     }
                 }
                 .padding(.horizontal, 20)

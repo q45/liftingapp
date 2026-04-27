@@ -123,13 +123,14 @@ export async function migrate(): Promise<void> {
 
         await client.query(`
             CREATE TABLE IF NOT EXISTS workout_sets (
-                id           UUID         PRIMARY KEY,
-                exercise_id  UUID         REFERENCES exercise_entries(id) ON DELETE CASCADE,
-                weight       DOUBLE PRECISION NOT NULL,
-                reps         INTEGER      NOT NULL,
-                "order"      INTEGER      NOT NULL DEFAULT 0,
-                updated_at   TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
-                deleted_at   TIMESTAMPTZ
+                id                UUID             PRIMARY KEY,
+                exercise_id       UUID             REFERENCES exercise_entries(id) ON DELETE CASCADE,
+                weight            DOUBLE PRECISION NOT NULL,
+                reps              INTEGER          NOT NULL,
+                duration_seconds  INTEGER,
+                "order"           INTEGER          NOT NULL DEFAULT 0,
+                updated_at        TIMESTAMPTZ      NOT NULL DEFAULT NOW(),
+                deleted_at        TIMESTAMPTZ
             );
         `);
 
@@ -150,6 +151,15 @@ export async function migrate(): Promise<void> {
         await client.query(
             `ALTER TABLE workout_sessions
                 ADD COLUMN IF NOT EXISTS is_completed BOOLEAN NOT NULL DEFAULT FALSE`,
+        );
+
+        // Optional duration on a set, for plank/dead-hang/AMRAP-style
+        // exercises where reps don't apply. Nullable: legacy rep-based
+        // sets (the vast majority) read NULL and the client treats
+        // that as "rep-based, ignore time".
+        await client.query(
+            `ALTER TABLE workout_sets
+                ADD COLUMN IF NOT EXISTS duration_seconds INTEGER`,
         );
 
         // `started_from_template_id` is a weak reference (no FK): it records

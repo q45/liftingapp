@@ -28,6 +28,13 @@ struct FinishWorkoutSheet: View {
     let unit: String
     /// Called with the template name the user typed. Nil means "skip".
     let onDone: (String?) -> Void
+    /// Called when the user taps "Actually, continue this workout".
+    /// Provides an immediate undo for accidental Finish taps -- the
+    /// parent is expected to call WorkoutManager.resume(session) and
+    /// then clear whatever state was gating this sheet.
+    /// Optional: supply nil if you want to keep the old sheet (no
+    /// resume affordance).
+    var onResume: (() -> Void)? = nil
 
     @Environment(\.dismiss) private var dismiss
     @State private var name: String = ""
@@ -172,6 +179,24 @@ struct FinishWorkoutSheet: View {
                 dismiss()
             }
             .buttonStyle(SecondaryButtonStyle())
+
+            // Undo affordance for the "I tapped Finish by accident"
+            // case. Sits below the primary actions so a user who meant
+            // to finish doesn't click it by habit, but visible enough
+            // that someone realizing their mistake sees it immediately.
+            if let onResume {
+                Button {
+                    onResume()
+                    dismiss()
+                } label: {
+                    Label("Actually, continue this workout", systemImage: "arrow.uturn.backward")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(.appMuted)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
+                }
+                .accessibilityLabel("Resume this workout")
+            }
         }
         .padding(.horizontal, 24)
         .padding(.bottom, 20)
@@ -202,6 +227,21 @@ struct TemplatePickerSheet: View {
         sort: \WorkoutTemplate.order,
     ) private var templates: [WorkoutTemplate]
 
+    /// Drives the create/edit sheet. Nil = no editor open; .new =
+    /// create-mode editor; .edit(t) = edit-mode editor for template `t`.
+    @State private var editorMode: EditorMode? = nil
+
+    private enum EditorMode: Identifiable {
+        case new
+        case edit(WorkoutTemplate)
+        var id: String {
+            switch self {
+            case .new: return "new"
+            case .edit(let t): return "edit-\(t.id)"
+            }
+        }
+    }
+
     var body: some View {
         NavigationStack {
             ZStack {
@@ -219,10 +259,31 @@ struct TemplatePickerSheet: View {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }.foregroundColor(.appMuted)
                 }
+                ToolbarItem(placement: .topBarTrailing) {
+                    // Plain "+" button opens the editor in create
+                    // mode. Sits next to the title so it's reachable
+                    // whether the list is empty or full.
+                    Button {
+                        editorMode = .new
+                    } label: {
+                        Image(systemName: "plus")
+                            .foregroundColor(.appAccent)
+                            .bold()
+                    }
+                    .accessibilityLabel("New template")
+                }
             }
         }
         .presentationDetents([.medium, .large])
         .preferredColorScheme(.dark)
+        .sheet(item: $editorMode) { mode in
+            switch mode {
+            case .new:
+                TemplateEditorView(editing: nil)
+            case .edit(let t):
+                TemplateEditorView(editing: t)
+            }
+        }
     }
 
     // MARK: Subviews
@@ -237,19 +298,28 @@ struct TemplatePickerSheet: View {
             Text("No Templates Yet")
                 .font(.system(size: 18, weight: .semibold))
                 .foregroundColor(.white)
-            Text("Finish a workout and save it as a template to reuse the exercise list next time.")
+            Text("Build a routine ahead of time, or save a finished workout as a template to reuse it next time.")
                 .font(.system(size: 13))
                 .foregroundColor(.appMuted)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 32)
+            Button {
+                editorMode = .new
+            } label: {
+                Label("Create Template", systemImage: "plus")
+            }
+            .buttonStyle(AccentButtonStyle())
+            .padding(.horizontal, 40)
+            .padding(.top, 8)
         }
     }
 
     @ViewBuilder
     private var list: some View {
-        // Plain List with custom row cells so swipe-to-delete Just Works
-        // without us reimplementing gesture handling. scrollContentBackground
-        // keeps the app's dark theme instead of iOS's default grouped-gray.
+        // Plain List with custom row cells so swipe-to-delete and
+        // swipe-to-edit Just Work without us reimplementing gesture
+        // handling. scrollContentBackground keeps the app's dark theme
+        // instead of iOS's default grouped-gray.
         List {
             ForEach(templates, id: \.id) { template in
                 Button {
@@ -260,11 +330,35 @@ struct TemplatePickerSheet: View {
                 }
                 .listRowBackground(Color.appCard)
                 .listRowSeparatorTint(Color.appBorder)
+                // Two trailing swipe actions: destructive Delete (full
+                // swipe) plus a non-destructive Edit. Edit sits to the
+                // left of Delete so a full swipe doesn't accidentally
+                // open the editor when the user meant to delete.
                 .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                     Button(role: .destructive) {
                         onDelete(template)
                     } label: {
                         Label("Delete", systemImage: "trash")
+                    }
+                    Button {
+                        editorMode = .edit(template)
+                    } label: {
+                        Label("Edit", systemImage: "pencil")
+                    }
+                    .tint(.appAccent)
+                }
+                // Long-press menu for users who don't think to swipe.
+                // Same actions, alternate discovery path.
+                .contextMenu {
+                    Button {
+                        editorMode = .edit(template)
+                    } label: {
+                        Label("Edit Template", systemImage: "pencil")
+                    }
+                    Button(role: .destructive) {
+                        onDelete(template)
+                    } label: {
+                        Label("Delete Template", systemImage: "trash")
                     }
                 }
             }

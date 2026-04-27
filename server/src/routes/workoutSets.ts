@@ -62,15 +62,17 @@ router.put(
 
         await pool.query(
             `INSERT INTO workout_sets (
-                id, user_id, exercise_id, weight, reps, "order", updated_at, deleted_at
-             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                id, user_id, exercise_id, weight, reps, duration_seconds,
+                "order", updated_at, deleted_at
+             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
              ON CONFLICT (id) DO UPDATE SET
-                 exercise_id = EXCLUDED.exercise_id,
-                 weight      = EXCLUDED.weight,
-                 reps        = EXCLUDED.reps,
-                 "order"     = EXCLUDED."order",
-                 updated_at  = EXCLUDED.updated_at,
-                 deleted_at  = EXCLUDED.deleted_at
+                 exercise_id      = EXCLUDED.exercise_id,
+                 weight           = EXCLUDED.weight,
+                 reps             = EXCLUDED.reps,
+                 duration_seconds = EXCLUDED.duration_seconds,
+                 "order"          = EXCLUDED."order",
+                 updated_at       = EXCLUDED.updated_at,
+                 deleted_at       = EXCLUDED.deleted_at
              WHERE workout_sets.updated_at <= EXCLUDED.updated_at
                AND workout_sets.user_id = EXCLUDED.user_id`,
             [
@@ -79,6 +81,7 @@ router.put(
                 dto.exerciseID ?? null,
                 dto.weight,
                 dto.reps,
+                dto.durationSeconds ?? null,
                 dto.order,
                 dto.updatedAt,
                 dto.deletedAt ?? null,

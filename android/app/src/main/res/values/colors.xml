@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Mirror of lifting/Theme.swift app-bg used by the splash window.
+    The full color set lives in Compose-side Theme.kt where it can
+    flow through MaterialTheme correctly. This file only carries the
+    XML-required colors.
+-->
+<resources>
+    <color name="app_bg">#0C0C0C</color>
+</resources>

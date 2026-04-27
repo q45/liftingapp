@@ -31,7 +31,21 @@ function sessionPayload(session: WorkoutSessionDTO, unit: "lbs" | "kg") {
             sets: (e.sets ?? [])
                 .filter((s) => !s.deletedAt)
                 .sort((a, b) => a.order - b.order)
-                .map((s) => ({ weight: s.weight, reps: s.reps, unit })),
+                .map((s) => {
+                    // Timed sets carry duration alongside (or instead
+                    // of) reps. Surface both so the LLM can recognize
+                    // a plank/dead-hang exercise and reason about
+                    // duration progression.
+                    const base: Record<string, unknown> = {
+                        weight: s.weight,
+                        reps: s.reps,
+                        unit,
+                    };
+                    if (typeof s.durationSeconds === "number" && s.durationSeconds > 0) {
+                        base.durationSeconds = s.durationSeconds;
+                    }
+                    return base;
+                }),
         }));
     return {
         date: session.endTime.slice(0, 10),

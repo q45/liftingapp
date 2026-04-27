@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+        Splash / system theme. The actual UI runs under our Compose
+        AppTheme; this only controls the activity window background
+        and status-bar color before Compose has had a chance to
+        render. We force the dark surface so there's no flash of
+        white on cold start.
+    -->
+    <style name="Theme.Lifting" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/app_bg</item>
+        <item name="android:statusBarColor">@color/app_bg</item>
+        <item name="android:navigationBarColor">@color/app_bg</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+    </style>
+</resources>

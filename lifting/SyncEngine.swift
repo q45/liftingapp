@@ -387,6 +387,7 @@ final class SyncEngine {
                     let s = WorkoutSet(
                         weight: dto.weight,
                         reps: dto.reps,
+                        durationSeconds: dto.durationSeconds,
                         order: dto.order,
                     )
                     s.id = dto.id
@@ -397,6 +398,7 @@ final class SyncEngine {
 
             set.weight = dto.weight
             set.reps = dto.reps
+            set.durationSeconds = dto.durationSeconds
             set.order = dto.order
             set.updatedAt = dto.updatedAt
             set.deletedAt = dto.deletedAt

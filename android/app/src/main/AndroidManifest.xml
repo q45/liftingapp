@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Internet for talking to the Fly.io server. Never accessing the
+         user's network directly so no other permissions needed for v1. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <application
+        android:name=".LiftingApp"
+        android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="false"
+        android:icon="@mipmap/ic_launcher"
+        android:label="Lifting"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.Lifting">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:label="Lifting"
+            android:theme="@style/Theme.Lifting"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+    </application>
+
+</manifest>

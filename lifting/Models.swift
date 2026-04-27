@@ -107,6 +107,12 @@ final class WorkoutSet {
     var id: UUID
     var weight: Double
     var reps: Int
+    /// When non-nil, this set was *timed* (plank, dead hang, weighted
+    /// carry, AMRAP-window). `reps` may still be meaningful for
+    /// AMRAP-style sets that want both numbers; for pure-time sets
+    /// the UI sets `reps = 0` and ignores it. The display layer
+    /// treats nil as "rep-based" (the legacy/default mode).
+    var durationSeconds: Int?
     var order: Int
 
     /// Inverse of `ExerciseEntry.sets`.
@@ -116,15 +122,21 @@ final class WorkoutSet {
     var deletedAt: Date?
     var needsSync: Bool
 
-    init(weight: Double, reps: Int, order: Int = 0) {
+    init(weight: Double, reps: Int, durationSeconds: Int? = nil, order: Int = 0) {
         self.id = UUID()
         self.weight = weight
         self.reps = reps
+        self.durationSeconds = durationSeconds
         self.order = order
         self.updatedAt = Date()
         self.deletedAt = nil
         self.needsSync = true
     }
+
+    /// True when this set was logged as a duration (plank etc.).
+    /// Convenience because every render-side check is the same:
+    /// "is this timed or reps?".
+    var isTimed: Bool { (durationSeconds ?? 0) > 0 }
 }
 
 // MARK: - Workout templates
@@ -431,15 +443,61 @@ final class WorkoutManager {
         SyncEngine.shared?.scheduleSync()
     }
 
-    func addSet(to exercise: ExerciseEntry, weight: Double, reps: Int) {
+    /// Add a new set to the active exercise. `durationSeconds` is
+    /// non-nil for timed sets (plank, dead hang, weighted carry); nil
+    /// for the rep-based default. The two are mutually exclusive in
+    /// the UI but the model permits both so future AMRAP-style logging
+    /// (reps within a fixed time window) doesn't need a migration.
+    func addSet(
+        to exercise: ExerciseEntry,
+        weight: Double,
+        reps: Int,
+        durationSeconds: Int? = nil,
+    ) {
         let set = WorkoutSet(
             weight: weight,
             reps: reps,
+            durationSeconds: durationSeconds,
             order: exercise.liveSets.count,
         )
         set.exercise = exercise
         modelContext.insert(set)
         exercise.markDirty()
+        try? modelContext.save()
+        SyncEngine.shared?.scheduleSync()
+    }
+
+    /// Edit a previously-logged set. Mirror of `addSet` -- accepts a
+    /// nullable `durationSeconds` so the user can flip a rep set to
+    /// a timed one (or vice versa) from the edit sheet.
+    func updateSet(
+        _ set: WorkoutSet,
+        weight: Double,
+        reps: Int,
+        durationSeconds: Int? = nil,
+    ) {
+        // Skip the save+sync round-trip if nothing actually changed.
+        // Users often open the edit sheet, glance at the numbers, and
+        // hit save without touching anything.
+        let unchanged = set.weight == weight
+            && set.reps == reps
+            && set.durationSeconds == durationSeconds
+        guard !unchanged else { return }
+        set.weight = weight
+        set.reps = reps
+        set.durationSeconds = durationSeconds
+        set.markDirty()
+        set.exercise?.markDirty()
+        try? modelContext.save()
+        SyncEngine.shared?.scheduleSync()
+    }
+
+    /// Remove a single set. Soft-deleted so the tombstone propagates to
+    /// other devices via SyncEngine -- mirror of `removeExercise`.
+    func removeSet(_ set: WorkoutSet) {
+        set.markDeleted()
+        set.exercise?.markDirty()
+        activeSession?.markDirty()
         try? modelContext.save()
         SyncEngine.shared?.scheduleSync()
     }
@@ -451,6 +509,30 @@ final class WorkoutManager {
             set.markDeleted()
         }
         exercise.markDeleted()
+        activeSession?.markDirty()
+        try? modelContext.save()
+        SyncEngine.shared?.scheduleSync()
+    }
+
+    /// Edit an exercise's name and/or category in place. Used by the
+    /// "Edit Exercise" sheet when the user fixes a typo or chose the
+    /// wrong category. Soft-validates the name (trim + 60-char cap)
+    /// to match `addExercise`. No-op when nothing actually changed,
+    /// so opening + closing the sheet without edits doesn't churn
+    /// the sync queue.
+    func updateExercise(
+        _ exercise: ExerciseEntry,
+        name: String,
+        category: String,
+    ) {
+        let trimmed = String(
+            name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(60),
+        )
+        guard !trimmed.isEmpty else { return }
+        guard trimmed != exercise.name || category != exercise.category else { return }
+        exercise.name = trimmed
+        exercise.category = category
+        exercise.markDirty()
         activeSession?.markDirty()
         try? modelContext.save()
         SyncEngine.shared?.scheduleSync()
@@ -483,6 +565,39 @@ final class WorkoutManager {
         activeSession = nil
         SyncEngine.shared?.scheduleSync()
         return session
+    }
+
+    /// Re-open a previously-completed session so the user can add more
+    /// sets, edit a typo, or recover from an accidental Finish tap.
+    ///
+    /// Guarded: refuses to resume if another session is already active
+    /// (we never want to silently discard an in-progress workout) and
+    /// refuses to resume a soft-deleted session. The caller is expected
+    /// to surface these rejections -- a disabled menu item or a toast.
+    ///
+    /// Timing: we reset `startTime` to now so the active-workout timer
+    /// shows sensible values. The original session duration is lost on
+    /// the next `finish()` -- a fair trade for a recovery action whose
+    /// primary use case is correcting a mistake seconds after it
+    /// happened. If the original duration matters, the History view
+    /// still holds the stored session until re-finish overwrites it.
+    ///
+    /// - Returns: `true` if the session was successfully resumed;
+    ///   `false` if it was refused (active session, or deleted).
+    @discardableResult
+    func resume(_ session: WorkoutSession) -> Bool {
+        guard activeSession == nil else { return false }
+        guard session.isLive else { return false }
+
+        session.isCompleted = false
+        session.startTime = .now
+        session.endTime = .now
+        session.markDirty()
+        try? modelContext.save()
+
+        activeSession = session
+        SyncEngine.shared?.scheduleSync()
+        return true
     }
 
     /// Abandon the active workout without finishing it. Tombstones
@@ -604,6 +719,81 @@ final class WorkoutManager {
     func deleteTemplate(_ template: WorkoutTemplate) {
         for ex in template.exercises { ex.markDeleted() }
         template.markDeleted()
+        try? modelContext.save()
+        SyncEngine.shared?.scheduleSync()
+    }
+
+    /// Append an exercise to an existing template. Used by the
+    /// pre-workout TemplateEditorView when the user taps "+ Add
+    /// Exercise". The new TemplateExercise gets an `order` one past
+    /// the current tail so it appears at the bottom of the list.
+    @discardableResult
+    func addExerciseToTemplate(
+        _ template: WorkoutTemplate,
+        name: String,
+        category: String,
+    ) -> TemplateExercise? {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        let entry = TemplateExercise(
+            name: String(trimmed.prefix(60)),
+            category: category,
+            order: template.liveExercises.count,
+        )
+        entry.template = template
+        modelContext.insert(entry)
+        template.markDirty()
+        try? modelContext.save()
+        SyncEngine.shared?.scheduleSync()
+        return entry
+    }
+
+    /// Soft-delete a single exercise from a template. The parent
+    /// template's `updatedAt` bumps too so the change syncs as a unit.
+    func removeExerciseFromTemplate(_ exercise: TemplateExercise) {
+        exercise.markDeleted()
+        exercise.template?.markDirty()
+        try? modelContext.save()
+        SyncEngine.shared?.scheduleSync()
+    }
+
+    /// Persist a new ordering for a template's exercises. The caller
+    /// (a SwiftUI view) supplies the desired final order -- typically
+    /// the result of applying `.onMove`'s IndexSet/destination to
+    /// `template.orderedExercises`. We do the reordering UI-side
+    /// because `Array.move(fromOffsets:toOffset:)` is a SwiftUI
+    /// extension and Models.swift deliberately avoids importing
+    /// SwiftUI.
+    ///
+    /// Re-numbers `order` only on rows whose position changed -- saves
+    /// a redundant dirty bit + sync push for unchanged rows. The
+    /// parent template is always marked dirty so remote devices see
+    /// the reorder as a single, coherent change.
+    func reorderTemplateExercises(
+        _ template: WorkoutTemplate,
+        ordered: [TemplateExercise],
+    ) {
+        for (i, ex) in ordered.enumerated() where ex.order != i {
+            ex.order = i
+            ex.markDirty()
+        }
+        template.markDirty()
+        try? modelContext.save()
+        SyncEngine.shared?.scheduleSync()
+    }
+
+    /// Rename a template. Trims and caps at 60 chars (matching the
+    /// validation in createTemplate / createEmptyTemplate). No-op when
+    /// the new name is empty after trimming or unchanged from the
+    /// existing one -- avoids spurious sync churn.
+    func renameTemplate(_ template: WorkoutTemplate, to newName: String) {
+        let trimmed = String(
+            newName.trimmingCharacters(in: .whitespacesAndNewlines).prefix(60),
+        )
+        guard !trimmed.isEmpty, trimmed != template.name else { return }
+        template.name = trimmed
+        template.markDirty()
         try? modelContext.save()
         SyncEngine.shared?.scheduleSync()
     }

@@ -1,0 +1,22 @@
+# Android Studio / Gradle
+.gradle/
+.idea/
+*.iml
+local.properties
+build/
+.cxx/
+captures/
+
+# Generated files
+.kotlin/
+gen/
+out/
+
+# Signing keystores -- never commit
+*.jks
+*.keystore
+keystore.properties
+
+# OS
+.DS_Store
+Thumbs.db

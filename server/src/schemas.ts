@@ -35,6 +35,10 @@ export const WorkoutSetSchema = z.object({
     exerciseID: z.string().uuid().nullable().optional(),
     weight: z.number().finite(),
     reps: z.number().int().min(0),
+    /// When non-null, the set was timed (plank, dead hang, etc.).
+    /// Nullable + optional so legacy rep-only payloads still validate.
+    /// Capped at 24h (86_400 s) so a typo can't poison stats.
+    durationSeconds: z.number().int().min(0).max(86_400).nullable().optional(),
     order: z.number().int().min(0),
     ...syncFields,
 });

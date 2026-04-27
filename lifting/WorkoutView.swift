@@ -16,6 +16,14 @@ struct WorkoutView: View {
     @State private var showPicker = false
     @State private var setTargetID: UUID? = nil
     @State private var coachTargetID: UUID? = nil
+    /// (exerciseID, setID) for the set-edit sheet. Nil when no edit
+    /// sheet is up. Paired because we need the exercise to seed the
+    /// sheet's state (previous-set hint, ordering) and the set to pre-
+    /// populate weight/reps.
+    @State private var editSetTarget: EditSetTarget? = nil
+    /// UUID of the exercise being edited (name/category fix), or nil
+    /// when no exercise edit sheet is up.
+    @State private var editExerciseTarget: EditExerciseTarget? = nil
     @State private var elapsed: Int = 0
     @State private var timer: Timer? = nil
 
@@ -55,16 +63,31 @@ struct WorkoutView: View {
             set: { pendingFinishedSessionID = $0?.id },
         )) { target in
             if let session = lookupSession(id: target.id) {
-                FinishWorkoutSheet(session: session, unit: unit) { name in
-                    // User can tap Save or Skip. On Save we persist a
-                    // template off the session's exercise list; on Skip
-                    // (nil) we just dismiss. Either way we clear the
-                    // state so the sheet doesn't re-present.
-                    if let name, !name.isEmpty {
-                        workoutManager.createTemplate(from: session, name: name)
-                    }
-                    pendingFinishedSessionID = nil
-                }
+                FinishWorkoutSheet(
+                    session: session,
+                    unit: unit,
+                    onDone: { name in
+                        // User tapped Save or Skip. On Save we persist
+                        // a template off the session's exercise list;
+                        // on Skip (nil) we just dismiss. Either way we
+                        // clear the state so the sheet doesn't
+                        // re-present.
+                        if let name, !name.isEmpty {
+                            workoutManager.createTemplate(from: session, name: name)
+                        }
+                        pendingFinishedSessionID = nil
+                    },
+                    onResume: {
+                        // "Oops, I didn't mean to finish." Flip the
+                        // session back to active and restart the timer.
+                        // resume() is guarded against an already-active
+                        // session, which shouldn't exist here (we just
+                        // cleared it via finish()) but the guard keeps
+                        // us honest if call order ever changes.
+                        _ = workoutManager.resume(session)
+                        pendingFinishedSessionID = nil
+                    },
+                )
             }
         }
     }
@@ -169,6 +192,15 @@ struct WorkoutView: View {
                             onAddSet: { setTargetID = ex.id },
                             onAskCoach: { coachTargetID = ex.id },
                             onRemove: { workoutManager.removeExercise(ex) },
+                            onEditExercise: {
+                                editExerciseTarget = EditExerciseTarget(id: ex.id)
+                            },
+                            onEditSet: { set in
+                                editSetTarget = EditSetTarget(
+                                    id: set.id,
+                                    exerciseID: ex.id,
+                                )
+                            },
                         )
                     }
                     Spacer(minLength: 24)
@@ -197,8 +229,13 @@ struct WorkoutView: View {
             set: { setTargetID = $0?.id },
         )) { target in
             if let ex = workoutManager.exercises.first(where: { $0.id == target.id }) {
-                SetLoggerView(exercise: ex, unit: unit) { weight, reps in
-                    workoutManager.addSet(to: ex, weight: weight, reps: reps)
+                SetLoggerView(exercise: ex, unit: unit) { weight, reps, duration in
+                    workoutManager.addSet(
+                        to: ex,
+                        weight: weight,
+                        reps: reps,
+                        durationSeconds: duration,
+                    )
                     setTargetID = nil
                 }
             }
@@ -212,9 +249,56 @@ struct WorkoutView: View {
                     exerciseName: ex.name,
                     unit: unit,
                 ) { weight, reps in
+                    // The AI coach only recommends rep-based sets
+                    // today, so duration is always nil here. Wired
+                    // through anyway in case we later add timed-set
+                    // suggestions.
                     workoutManager.addSet(to: ex, weight: weight, reps: reps)
                     coachTargetID = nil
                 }
+            }
+        }
+        // Edit-exercise sheet. Triggered by the long-press context
+        // menu on an ExerciseCard header (typo / wrong category fix).
+        // Resolves by id so a stale reference (sync deleted the row
+        // in the background) just dismisses cleanly.
+        .sheet(item: $editExerciseTarget) { target in
+            if let ex = workoutManager.exercises.first(where: { $0.id == target.id }) {
+                EditExerciseSheet(exercise: ex) { newName, newCategory in
+                    workoutManager.updateExercise(
+                        ex,
+                        name: newName,
+                        category: newCategory,
+                    )
+                    editExerciseTarget = nil
+                }
+            }
+        }
+        // Edit-set sheet. Triggered by tapping a logged set row inside
+        // an ExerciseCard. Resolves the exercise + set from the target
+        // IDs so stale references (set deleted in background sync)
+        // just dismiss rather than crash.
+        .sheet(item: $editSetTarget) { target in
+            if let ex = workoutManager.exercises.first(where: { $0.id == target.exerciseID }),
+               let set = ex.liveSets.first(where: { $0.id == target.id }) {
+                SetLoggerView(
+                    exercise: ex,
+                    unit: unit,
+                    editing: set,
+                    onSave: { weight, reps, duration in
+                        workoutManager.updateSet(
+                            set,
+                            weight: weight,
+                            reps: reps,
+                            durationSeconds: duration,
+                        )
+                        editSetTarget = nil
+                    },
+                    onDelete: {
+                        workoutManager.removeSet(set)
+                        editSetTarget = nil
+                    },
+                )
             }
         }
     }
@@ -260,12 +344,29 @@ struct SetLoggerTarget: Identifiable {
     let id: UUID
 }
 
+/// Identifiable pair for the set-edit sheet. The `id` (WorkoutSet's
+/// UUID) satisfies `.sheet(item:)`; `exerciseID` is carried alongside
+/// so the sheet can look the parent exercise up in WorkoutManager for
+/// its previous-set hint and order context.
+struct EditSetTarget: Identifiable, Equatable {
+    let id: UUID          // WorkoutSet.id
+    let exerciseID: UUID  // ExerciseEntry.id
+}
+
 // Identifiable wrapper for the FinishWorkoutSheet. We can't bind
 // `.sheet(item:)` to a WorkoutSession directly because SwiftData
 // @Model's autogenerated conformance collides with a hand-rolled
 // Identifiable extension; a tiny UUID wrapper sidesteps that while
 // letting us resolve the full session by id in the sheet closure.
 struct FinishedSessionTarget: Identifiable {
+    let id: UUID
+}
+
+/// Identifiable wrapper for the "edit exercise" sheet. Same pattern
+/// as the other targets in this file: the sheet binding stores the
+/// exercise's UUID; the closure resolves the live ExerciseEntry off
+/// of WorkoutManager so background sync deletes don't crash the sheet.
+struct EditExerciseTarget: Identifiable {
     let id: UUID
 }
 
@@ -277,6 +378,16 @@ struct ExerciseCard: View {
     let onAddSet: () -> Void
     let onAskCoach: () -> Void
     let onRemove: () -> Void
+    /// Triggered by the header context menu's "Edit Exercise". Lets
+    /// the user fix a typo in the name or correct the category they
+    /// picked when adding the exercise. Defaulted to no-op so the
+    /// preview / older call sites don't break; WorkoutView wires it.
+    var onEditExercise: () -> Void = {}
+    /// Tapping a logged-set row calls this with the specific set.
+    /// Defaulted to a no-op so older call sites that don't wire edit
+    /// don't have to be updated all at once, though in practice the
+    /// only caller is WorkoutView which always passes it.
+    var onEditSet: (WorkoutSet) -> Void = { _ in }
 
     @State private var expanded = true
 
@@ -321,6 +432,23 @@ struct ExerciseCard: View {
             .padding(.vertical, 14)
             .contentShape(Rectangle())
             .onTapGesture { withAnimation(.easeInOut(duration: 0.2)) { expanded.toggle() } }
+            // Long-press menu surfaces the rare-but-needed actions
+            // without crowding the header with more icons. Mirrors the
+            // pattern used in HomeView.RecentWorkoutRow and the
+            // template picker, so users only have to learn one
+            // discovery affordance.
+            .contextMenu {
+                Button {
+                    onEditExercise()
+                } label: {
+                    Label("Edit Exercise", systemImage: "pencil")
+                }
+                Button(role: .destructive) {
+                    onRemove()
+                } label: {
+                    Label("Remove Exercise", systemImage: "trash")
+                }
+            }
 
             if expanded {
                 VStack(spacing: 0) {
@@ -339,29 +467,61 @@ struct ExerciseCard: View {
                         Divider().background(Color.appBorder).padding(.horizontal, 16)
 
                         ForEach(Array(orderedSets.enumerated()), id: \.element.id) { i, s in
-                            HStack {
-                                Text("\(i + 1)")
-                                    .frame(width: 28, alignment: .leading)
-                                    .foregroundColor(.appMuted)
-                                HStack(spacing: 2) {
-                                    Text("\(Int(s.weight))")
-                                        .fontWeight(.bold)
-                                    Text(unit).foregroundColor(.appMuted)
+                            // Whole row is tappable -> edit sheet.
+                            // contentShape ensures the gesture covers the
+                            // empty space between columns, not just the
+                            // text runs. Accessibility label spells out
+                            // the contents so VoiceOver users can tell
+                            // what they're about to edit.
+                            //
+                            // Timed sets render the duration in place of
+                            // reps and show "—" for volume since
+                            // weight*reps doesn't apply.
+                            Button {
+                                onEditSet(s)
+                            } label: {
+                                HStack {
+                                    Text("\(i + 1)")
+                                        .frame(width: 28, alignment: .leading)
+                                        .foregroundColor(.appMuted)
+                                    HStack(spacing: 2) {
+                                        Text("\(Int(s.weight))")
+                                            .fontWeight(.bold)
+                                        Text(unit).foregroundColor(.appMuted)
+                                    }
+                                    .frame(maxWidth: .infinity)
+                                    if s.isTimed, let dur = s.durationSeconds {
+                                        HStack(spacing: 2) {
+                                            Text(formatDuration(dur))
+                                                .fontWeight(.bold)
+                                                .monospacedDigit()
+                                            Image(systemName: "timer")
+                                                .font(.system(size: 11))
+                                                .foregroundColor(.appMuted)
+                                        }
+                                        .frame(maxWidth: .infinity)
+                                        Text("—")
+                                            .frame(width: 44, alignment: .trailing)
+                                            .foregroundColor(.appMuted)
+                                    } else {
+                                        HStack(spacing: 2) {
+                                            Text("\(s.reps)").fontWeight(.bold)
+                                            Text("reps").foregroundColor(.appMuted)
+                                        }
+                                        .frame(maxWidth: .infinity)
+                                        Text("\(Int(s.weight) * s.reps)")
+                                            .frame(width: 44, alignment: .trailing)
+                                            .foregroundColor(.appMuted)
+                                    }
                                 }
-                                .frame(maxWidth: .infinity)
-                                HStack(spacing: 2) {
-                                    Text("\(s.reps)").fontWeight(.bold)
-                                    Text("reps").foregroundColor(.appMuted)
-                                }
-                                .frame(maxWidth: .infinity)
-                                Text("\(Int(s.weight) * s.reps)")
-                                    .frame(width: 44, alignment: .trailing)
-                                    .foregroundColor(.appMuted)
+                                .font(.system(size: 14))
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 20)
+                                .padding(.vertical, 9)
+                                .contentShape(Rectangle())
                             }
-                            .font(.system(size: 14))
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 20)
-                            .padding(.vertical, 9)
+                            .buttonStyle(.plain)
+                            .accessibilityLabel(setRowAccessibilityLabel(index: i, set: s))
                             if i < orderedSets.count - 1 {
                                 Divider().background(Color.appBorder).padding(.horizontal, 16)
                             }
@@ -382,6 +542,29 @@ struct ExerciseCard: View {
         .background(Color.appCard)
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color.appBorder, lineWidth: 1))
+    }
+
+    // MARK: - Set row helpers
+
+    /// "0:30" / "1:30" / "1:05:00". Same convention as
+    /// SetLoggerView.formatSeconds; duplicated here to keep
+    /// ExerciseCard self-contained (the views are independent).
+    private func formatDuration(_ total: Int) -> String {
+        let s = max(0, total)
+        if s < 3600 {
+            return String(format: "%d:%02d", s / 60, s % 60)
+        }
+        let h = s / 3600
+        let m = (s % 3600) / 60
+        let sec = s % 60
+        return String(format: "%d:%02d:%02d", h, m, sec)
+    }
+
+    private func setRowAccessibilityLabel(index: Int, set: WorkoutSet) -> String {
+        if set.isTimed, let dur = set.durationSeconds {
+            return "Set \(index + 1), \(Int(set.weight)) \(unit), \(formatDuration(dur)). Tap to edit."
+        }
+        return "Set \(index + 1), \(Int(set.weight)) \(unit), \(set.reps) reps. Tap to edit."
     }
 }
 
@@ -679,5 +862,149 @@ struct ExerciseCoachSheet: View {
         w.truncatingRemainder(dividingBy: 1) == 0
             ? "\(Int(w))"
             : String(format: "%.1f", w)
+    }
+}
+
+// MARK: - Edit Exercise sheet
+//
+// Reached from the long-press context menu on an ExerciseCard
+// header. Lets the user fix a typo in the exercise name or correct
+// the category they picked when adding it. Two fields, one save
+// path -- deliberately small so it doesn't compete with
+// SetLoggerView for attention. Save commits via
+// WorkoutManager.updateExercise; Cancel discards.
+
+struct EditExerciseSheet: View {
+    let exercise: ExerciseEntry
+    let onSave: (String, String) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var name: String = ""
+    @State private var category: String = "Chest"
+
+    @FocusState private var nameFocused: Bool
+
+    /// Same six categories the picker uses; kept inline rather than
+    /// pulled from ExerciseLibrary so this view stays self-contained.
+    /// If the canonical list ever changes, both copies need updating
+    /// (acceptable for v1; small enough not to warrant a shared const).
+    private let categories = ["Chest", "Back", "Legs", "Shoulders", "Arms", "Core"]
+
+    private var trimmedName: String {
+        name.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var canSave: Bool {
+        !trimmedName.isEmpty
+            && (trimmedName != exercise.name || category != exercise.category)
+    }
+
+    var body: some View {
+        ZStack {
+            Color(red: 0.086, green: 0.086, blue: 0.086).ignoresSafeArea()
+            VStack(alignment: .leading, spacing: 0) {
+                Capsule()
+                    .fill(Color.appBorder)
+                    .frame(width: 36, height: 4)
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 12)
+                    .padding(.bottom, 18)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("EDIT EXERCISE")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(.appAccent)
+                        .kerning(1)
+                    Text(exercise.name)
+                        .font(.system(size: 20, weight: .bold))
+                        .foregroundColor(.white)
+                        .lineLimit(1)
+                }
+                .padding(.horizontal, 24)
+                .padding(.bottom, 22)
+
+                // Name
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("NAME")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(.appMuted)
+                        .kerning(0.8)
+                    TextField(
+                        "",
+                        text: $name,
+                        prompt: Text("Exercise name")
+                            .foregroundColor(.appMuted),
+                    )
+                    .textInputAutocapitalization(.words)
+                    .disableAutocorrection(false)
+                    .focused($nameFocused)
+                    .foregroundColor(.white)
+                    .tint(.appAccent)
+                    .font(.system(size: 17))
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 14)
+                    .background(Color.appCard2)
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.appBorder, lineWidth: 1))
+                    .submitLabel(.done)
+                    .onSubmit { nameFocused = false }
+                }
+                .padding(.horizontal, 24)
+                .padding(.bottom, 18)
+
+                // Category
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("CATEGORY")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(.appMuted)
+                        .kerning(0.8)
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 6) {
+                            ForEach(categories, id: \.self) { cat in
+                                Button { category = cat } label: {
+                                    HStack(spacing: 6) {
+                                        Circle()
+                                            .fill(categoryColor(cat))
+                                            .frame(width: 8, height: 8)
+                                        Text(cat)
+                                    }
+                                    .font(.system(size: 13, weight: category == cat ? .bold : .medium))
+                                    .foregroundColor(category == cat ? .black : .appMuted2)
+                                    .padding(.horizontal, 14)
+                                    .padding(.vertical, 7)
+                                    .background(category == cat ? Color.appAccent : Color.appCard)
+                                    .clipShape(Capsule())
+                                    .overlay(Capsule().stroke(category == cat ? Color.appAccent : Color.appBorder, lineWidth: 1))
+                                }
+                            }
+                        }
+                    }
+                }
+                .padding(.horizontal, 24)
+                .padding(.bottom, 24)
+
+                Button("Save Changes") {
+                    onSave(trimmedName, category)
+                    dismiss()
+                }
+                .buttonStyle(AccentButtonStyle())
+                .disabled(!canSave)
+                .padding(.horizontal, 24)
+                .padding(.bottom, 10)
+
+                Button("Cancel") { dismiss() }
+                    .buttonStyle(SecondaryButtonStyle())
+                    .padding(.horizontal, 24)
+                    .padding(.bottom, 20)
+            }
+        }
+        .presentationDetents([.medium])
+        .presentationDragIndicator(.hidden)
+        .preferredColorScheme(.dark)
+        .onAppear {
+            name = exercise.name
+            category = exercise.category
+        }
     }
 }

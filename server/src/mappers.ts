@@ -42,6 +42,7 @@ interface WorkoutSetRow extends SyncColumns {
     exercise_id: string | null;
     weight: number | string;
     reps: number;
+    duration_seconds: number | null;
     order: number;
 }
 
@@ -85,7 +86,7 @@ export const WORKOUT_SESSION_COLUMNS =
 export const EXERCISE_ENTRY_COLUMNS =
     `id, session_id, name, category, "order", updated_at, deleted_at`;
 export const WORKOUT_SET_COLUMNS =
-    `id, exercise_id, weight, reps, "order", updated_at, deleted_at`;
+    `id, exercise_id, weight, reps, duration_seconds, "order", updated_at, deleted_at`;
 export const WORKOUT_TEMPLATE_COLUMNS =
     `id, name, "order", updated_at, deleted_at`;
 export const TEMPLATE_EXERCISE_COLUMNS =
@@ -107,6 +108,7 @@ export function mapWorkoutSetRow(row: WorkoutSetRow): WorkoutSetDTO {
         exerciseID: row.exercise_id,
         weight: toNumber(row.weight) ?? 0,
         reps: row.reps,
+        durationSeconds: row.duration_seconds,
         order: row.order,
         updatedAt: row.updated_at,
         deletedAt: row.deleted_at,
